@@ -3,34 +3,37 @@ import requests
 import time
 import numpy as np
 from threading import Thread, Lock
-from queue import Queue
+from collections import deque
 
 # Server configuration
-SERVER_URL = "http://localhost:5000/video_feed"  # Change if server is on different machine
+SERVER_URL = "http://localhost:5000/video_feed"
 
 # Thread-safe result storage
 result_lock = Lock()
 latest_result = {'hand_detected': False}
 
-# Frame queue for async sending
-frame_queue = Queue(maxsize=2)  # Limit queue size to prevent memory issues
+# Frame management
+latest_frame_data = None
+frame_lock = Lock()
+should_send = True
 
 def send_frames_worker():
-    """Background thread to send frames to server"""
-    session = requests.Session()  # Reuse connection
+    """Background thread to continuously send latest frame"""
+    session = requests.Session()
+    global should_send
     
-    while True:
-        if not frame_queue.empty():
-            frame_data = frame_queue.get()
-            if frame_data is None:  # Stop signal
-                break
-            
+    while should_send:
+        # Get latest frame
+        with frame_lock:
+            frame_data = latest_frame_data
+        
+        if frame_data is not None:
             try:
                 response = session.post(
                     SERVER_URL,
                     data=frame_data,
                     headers={'Content-Type': 'image/jpeg'},
-                    timeout=1
+                    timeout=0.5
                 )
                 
                 if response.status_code == 200:
@@ -38,34 +41,29 @@ def send_frames_worker():
                     with result_lock:
                         global latest_result
                         latest_result = result
-            except Exception as e:
-                # Silently handle errors to not spam console
+            except:
                 pass
+        else:
+            time.sleep(0.01)  # Small delay if no frame available
 
-# Start background thread
+# Start background sender thread
 sender_thread = Thread(target=send_frames_worker, daemon=True)
 sender_thread.start()
 
 # Open webcam
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)  # Lower resolution for speed
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 cap.set(cv2.CAP_PROP_FPS, 30)
-
-# Reduce buffer to get latest frames
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-print("Starting webcam test client...")
-print(f"Sending frames to: {SERVER_URL}")
-print("Press 'q' to quit")
+print("Starting optimized webcam client...")
+print(f"Server: {SERVER_URL}")
+print("Press 'q' to quit, 'r' to reset")
 
 frame_count = 0
 start_time = time.time()
 fps_display = 0
-
-# Frame skipping for sending (send every Nth frame)
-frame_skip = 2  # Send every 2nd frame
-frame_counter = 0
 
 while True:
     ret, frame = cap.read()
@@ -73,60 +71,79 @@ while True:
         print("Failed to capture frame")
         break
     
-    # Flip frame horizontally for mirror effect
+    # Flip for mirror effect
     frame = cv2.flip(frame, 1)
     
-    # Send frame asynchronously (skip frames to reduce load)
-    frame_counter += 1
-    if frame_counter % frame_skip == 0:
-        # Encode frame as JPEG with lower quality for speed
-        _, img_encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-        
-        # Add to queue if not full
-        if not frame_queue.full():
-            frame_queue.put(img_encoded.tobytes())
+    # Encode frame with low quality for speed
+    _, img_encoded = cv2.imencode('.jpg', frame, 
+                                  [cv2.IMWRITE_JPEG_QUALITY, 50,
+                                   cv2.IMWRITE_JPEG_OPTIMIZE, 1])
     
-    # Get latest result from background thread
+    # Update latest frame for sender thread
+    with frame_lock:
+        latest_frame_data = img_encoded.tobytes()
+    
+    # Resize for display (make it bigger for viewing)
+    display_frame = cv2.resize(frame, (640, 480))
+    
+    # Get latest result
     with result_lock:
         result = latest_result.copy()
     
-    # Display result on frame
+    # Draw result on display frame
     if result.get('hand_detected', False):
         cell = result['cell']
-        cv2.putText(frame, f"Cell: R{cell['row']} C{cell['col']}", 
-                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
+        # Draw cell info
+        cv2.putText(display_frame, f"Cell: Row {cell['row']}, Col {cell['col']}", 
+                   (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        
+        # Draw click indicator
         if result.get('click', False):
-            cv2.putText(frame, "CLICK!", (10, 70), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+            cv2.circle(display_frame, (30, 90), 20, (0, 0, 255), -1)
+            cv2.putText(display_frame, "CLICK!", (60, 100), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
         
-        cv2.putText(frame, f"Distance: {result.get('finger_distance', 'N/A')}", 
-                   (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Draw distance
+        distance = result.get('finger_distance', 0)
+        cv2.putText(display_frame, f"Distance: {distance}", 
+                   (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        # Status indicator
+        cv2.circle(display_frame, (620, 30), 10, (0, 255, 0), -1)
     else:
-        cv2.putText(frame, "No hand detected", (10, 30), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(display_frame, "No hand detected", (10, 40), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        cv2.circle(display_frame, (620, 30), 10, (0, 0, 255), -1)
     
-    # Calculate and display FPS
+    # Calculate FPS
     frame_count += 1
-    elapsed_time = time.time() - start_time
-    if elapsed_time > 0.5:  # Update FPS display every 0.5s
-        fps_display = frame_count / elapsed_time
+    elapsed = time.time() - start_time
+    if elapsed > 0.3:
+        fps_display = frame_count / elapsed
         frame_count = 0
         start_time = time.time()
     
-    # Show FPS on frame
-    cv2.putText(frame, f"FPS: {fps_display:.1f}", (10, frame.shape[0] - 10), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    # Display FPS
+    cv2.putText(display_frame, f"FPS: {fps_display:.1f}", 
+               (10, display_frame.shape[0] - 20), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     
-    # Display frame
-    cv2.imshow('Webcam Test Client', frame)
+    # Show frame
+    cv2.imshow('Hand Detection Client', display_frame)
     
-    # Check for quit
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    # Handle keys
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
         break
+    elif key == ord('r'):
+        with result_lock:
+            latest_result = {'hand_detected': False}
+        print("Result reset")
 
 # Cleanup
-frame_queue.put(None)  # Stop signal
+should_send = False
+sender_thread.join(timeout=1)
 cap.release()
 cv2.destroyAllWindows()
-print("Test client stopped")
+print("Client stopped")
