@@ -33,7 +33,7 @@ last_cell_select_time = 0
 
 last_click_time = 0
 click_cooldown = 0.5
-click_threshold = 40
+click_threshold = 20
 
 def get_grid_cell(x, y, width, height):
     """Determine which grid cell contains the given coordinates"""
