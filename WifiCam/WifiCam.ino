@@ -27,12 +27,20 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   initialResolution = Resolution::find(320, 240);
+  // Resolution::find(160, 120)  // QQVGA - ~2-4KB per frame, 40+ FPS
+  // Resolution::find(176, 144)  // QCIF  - ~3-5KB per frame, 35+ FPS  
+  // Resolution::find(240, 176)  // HQVGA - ~5-8KB per frame, 30+ FPS
+  // Resolution::find(320, 240)  // QVGA  - ~8-12KB per frame, 25+ FPS
   
   Config cfg;
   cfg.setPins(pins::AiThinker);
   cfg.setResolution(initialResolution);
-  cfg.setJpeg(80);
-  cfg.setBufferCount(2);  // Double buffering
+  // cfg.setJpeg(80);
+  cfg.setJpeg(10);
+  // cfg.setJpeg(30);  // Very low quality, max speed
+  // cfg.setJpeg(50);  // Low quality, good speed
+  // cfg.setJpeg(70);  // Medium quality, decent speed
+  cfg.setBufferCount(1);  // Double buffering
   
   if (!Camera.begin(cfg)) {
     Serial.println("Camera init failed");
