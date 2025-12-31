@@ -1,0 +1,6 @@
+flask==3.0.0
+opencv-python-headless==4.8.1.78
+mediapipe==0.10.14
+paho-mqtt==1.6.1
+numpy==1.24.3
+protobuf>=4.25.3,<5

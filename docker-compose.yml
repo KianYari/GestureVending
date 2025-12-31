@@ -1,0 +1,24 @@
+services:
+  dari-server:
+    image: ghcr.io/kianyari/dari-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dari-server
+    ports:
+      - "5001:5000/tcp" # Flask HTTP API (host:container)
+      - "5001:5000/udp" # UDP video frame reception (host:container)
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
