@@ -13,7 +13,6 @@ app = Flask(__name__)
 # =======================
 # MQTT Configuration
 # =======================
-# Replace with your actual broker address if not using HiveMQ public broker
 MQTT_BROKER = "broker.hivemq.com" 
 MQTT_PORT = 1883
 MQTT_TOPIC_PREFIX = "some_email/vending/led_control"
@@ -21,27 +20,54 @@ MQTT_TOPIC_CONFIG = "vending/config/grid"
 
 mqtt_client = mqtt.Client()
 
+# =======================
+# Grid Configuration (Dynamic)
+# =======================
+# Default: 6 Rows. Row 0 is 5 cols, Rows 1-5 are 10 cols
+grid_layout = [5, 10, 10, 10, 10, 10] 
+
+def update_grid_layout(config):
+    """
+    Regenerates the grid_layout list based on MQTT config.
+    """
+    global grid_layout
+    try:
+        total_rows = int(config.get('rows', 6))
+        cols_double = int(config.get('cols_double', 5))
+        cols_single = int(config.get('cols_single', 10))
+        
+        # indices of rows that should be "double" (wider, fewer cols)
+        # Default to just row 0 if not specified
+        double_indices = config.get('double_row_indices', [0])
+        
+        new_layout = []
+        for r in range(total_rows):
+            if r in double_indices:
+                new_layout.append(cols_double)
+            else:
+                new_layout.append(cols_single)
+        
+        grid_layout = new_layout
+        print(f"Grid Layout Updated: {grid_layout}")
+        
+    except Exception as e:
+        print(f"Error parsing grid config: {e}")
+
 def on_connect(client, userdata, flags, rc):
     print(f"Connected to MQTT Broker with result code {rc}")
-    # Subscribe to configuration topic for dynamic updates
     client.subscribe(MQTT_TOPIC_CONFIG)
 
 def on_message(client, userdata, msg):
-    global grid_rows, first_row_cols, other_row_cols
     try:
-        # Expecting JSON like: {"rows": 6, "first_cols": 5, "other_cols": 10}
         payload = json.loads(msg.payload.decode())
-        if 'rows' in payload: grid_rows = int(payload['rows'])
-        if 'first_cols' in payload: first_row_cols = int(payload['first_cols'])
-        if 'other_cols' in payload: other_row_cols = int(payload['other_cols'])
-        print(f"Grid updated via MQTT: {grid_rows}x({first_row_cols}/{other_row_cols})")
+        print(f"Received Config: {payload}")
+        update_grid_layout(payload)
     except Exception as e:
         print(f"Failed to update grid config via MQTT: {e}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
-# Start MQTT in a non-blocking way
 try:
     mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
     mqtt_client.loop_start()
@@ -54,13 +80,6 @@ except Exception as e:
 UDP_IP = "0.0.0.0"
 UDP_PORT = 5000
 MAX_UDP_PACKET_SIZE = 65536
-
-# =======================
-# Grid Configuration (Defaults)
-# =======================
-grid_rows = 6
-first_row_cols = 5
-other_row_cols = 10
 
 # =======================
 # MediaPipe Setup
@@ -103,70 +122,84 @@ fps = 0
 # =======================
 # Helper Functions
 # =======================
+
 def get_grid_cell(x, y, width, height):
-    """Determine which grid cell contains the given coordinates"""
-    # Use global variables to allow MQTT updates to affect logic immediately
-    global grid_rows, first_row_cols, other_row_cols
+    """
+    Determine which grid cell contains the given coordinates
+    based on the dynamic grid_layout.
+    """
+    global grid_layout
     
-    if grid_rows == 0: return (0, 0, 1) 
+    num_rows = len(grid_layout)
+    if num_rows == 0: return (0, 0, 1)
     
-    row_height = height / grid_rows
+    row_height = height / num_rows
     
+    # 1. Determine Row
     row = int(y / row_height)
-    if row >= grid_rows: row = grid_rows - 1
+    if row >= num_rows: row = num_rows - 1
+    if row < 0: row = 0
+
+    # 2. Determine Column based on specific configuration of THIS row
+    cols_in_this_row = grid_layout[row]
+    col_width = width / cols_in_this_row
     
-    if row == 0:
-        col_width = width / first_row_cols
-        col = int(x / col_width)
-        if col >= first_row_cols: col = first_row_cols - 1
-        return (row, col, first_row_cols)
-    else:
-        col_width = width / other_row_cols
-        col = int(x / col_width)
-        if col >= other_row_cols: col = other_row_cols - 1
-        return (row, col, other_row_cols)
+    col = int(x / col_width)
+    if col >= cols_in_this_row: col = cols_in_this_row - 1
+    if col < 0: col = 0
+    
+    return (row, col, cols_in_this_row)
 
 def draw_grid(frame):
-    """Draw grid overlay on frame"""
-    global grid_rows, first_row_cols, other_row_cols
+    """Draw dynamic grid overlay on frame"""
+    global grid_layout
     
     height, width, _ = frame.shape
-    row_height = height / grid_rows
+    num_rows = len(grid_layout)
+    if num_rows == 0: return
+
+    row_height = height / num_rows
     
-    # Horizontal lines
-    for i in range(1, grid_rows):
+    # Draw Horizontal lines (same for everyone)
+    for i in range(1, num_rows):
         y = int(i * row_height)
         cv2.line(frame, (0, y), (width, y), (255, 255, 255), 1)
     
-    # Vertical lines (First Row)
-    col_width = width / first_row_cols
-    for i in range(1, first_row_cols):
-        x = int(i * col_width)
-        cv2.line(frame, (x, 0), (x, int(row_height)), (255, 255, 255), 1)
-    
-    # Vertical lines (Other Rows)
-    col_width = width / other_row_cols
-    for i in range(1, other_row_cols):
-        x = int(i * col_width)
-        cv2.line(frame, (x, int(row_height)), (x, height), (255, 255, 255), 1)
+    # Draw Vertical lines (Dynamic per row)
+    for r in range(num_rows):
+        cols = grid_layout[r]
+        col_width = width / cols
+        
+        # Y-coordinates for this specific row
+        y_start = int(r * row_height)
+        y_end = int((r + 1) * row_height)
+        
+        for c in range(1, cols):
+            x = int(c * col_width)
+            cv2.line(frame, (x, y_start), (x, y_end), (255, 255, 255), 1)
 
 def calculate_slot_id(row, col):
     """
-    Calculates a unique ID for the slot based on row and col.
-    Example: Row 0 is 1-5, Row 1 is 6-15, etc.
+    Calculates a unique ID by summing all columns in previous rows
+    and adding the current column index.
     """
+    global grid_layout
+    
     slot_id = 0
-    if row == 0:
-        slot_id = col + 1
-    else:
-        # Logic: First row count + ((current_row - 1) * cols_per_other_row) + current_col + 1
-        slot_id = first_row_cols + ((row - 1) * other_row_cols) + col + 1
+    
+    # Sum of all slots in previous rows
+    for r in range(row):
+        slot_id += grid_layout[r]
+        
+    # Add current column (1-based index)
+    slot_id += (col + 1)
+    
     return slot_id
 
 def process_frame(frame):
     """Process frame: Detect Hands + Draw Grid + Calculate Interaction"""
     global last_selected_cell, last_cell_select_time, last_click_time
-    global frame_count, last_fps_time, fps, grid_rows, first_row_cols, other_row_cols
+    global frame_count, last_fps_time, fps, grid_layout
 
     # FPS Calculation
     frame_count += 1
@@ -216,13 +249,11 @@ def process_frame(frame):
         # ---------------------------------------------------------
         # 3. Selection Publishing (Hover)
         # ---------------------------------------------------------
+        # Only publish if cell changed OR if cooldown passed (optional logic tweak)
         if current_cell != last_selected_cell and (current_time - last_cell_select_time) > cell_select_cooldown:
-            # Topic: some_email/vending/led_control/<slot_id>
             topic = f"{MQTT_TOPIC_PREFIX}/{slot_id}"
             
             print(f"Cell Select: R{current_cell[0]} C{current_cell[1]} (Slot {slot_id}) -> MQTT: {topic}")
-            
-            # Publish 'selected' or simply an empty message to indicate selection
             mqtt_client.publish(topic, "selected")
             
             last_selected_cell = current_cell
@@ -241,10 +272,7 @@ def process_frame(frame):
         # 4. Click Publishing (Payment/Final Select)
         # ---------------------------------------------------------
         if is_clicking and (current_time - last_click_time) > click_cooldown:
-            # Topic: some_email/vending/led_control/select
             topic = f"{MQTT_TOPIC_PREFIX}/select"
-            
-            # We publish the SLOT ID as the payload so the receiver knows WHAT was clicked
             payload = str(slot_id)
             
             print(f"CLICK at Slot {slot_id} -> MQTT: {topic} Payload: {payload}")
@@ -266,11 +294,9 @@ def process_frame(frame):
         # Highlight Cell
         if current_cell:
             row, col, total_cols = current_cell
-            row_height = frame_height / grid_rows
-            if row == 0:
-                col_width = frame_width / first_row_cols
-            else:
-                col_width = frame_width / other_row_cols
+            num_rows = len(grid_layout)
+            row_height = frame_height / num_rows
+            col_width = frame_width / total_cols # total_cols comes from get_grid_cell return
             
             x1 = int(col * col_width)
             y1 = int(row * row_height)
