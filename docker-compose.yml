@@ -10,6 +10,12 @@ services:
       - "5001:5000/udp" # UDP video frame reception (host:container)
     environment:
       - PYTHONUNBUFFERED=1
+      - MQTT_BROKER=${MQTT_BROKER}
+      - MQTT_PORT=${MQTT_PORT}
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+    # env_file:
+    #   - .env
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
