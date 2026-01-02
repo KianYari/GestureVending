@@ -5,6 +5,7 @@ import time
 import config
 import grid_manager
 import mqtt_handler
+import json
 
 class HandProcessor:
     def __init__(self):
@@ -73,10 +74,13 @@ class HandProcessor:
 
             # Selection Publishing (Hover)
             if current_cell != self.last_selected_cell and (current_time - self.last_cell_select_time) > config.CELL_SELECT_COOLDOWN:
-                topic = f"{config.MQTT_TOPIC_PREFIX}/{slot_id}"
-                print(f"Cell Select: R{current_cell[0]} C{current_cell[1]} (Slot {slot_id}) -> MQTT: {topic}")
-                mqtt_handler.publish(topic, "selected")
-                
+                payload = json.dumps({
+                    "SelectItem": slot_id,
+                    "Goto_Payment": False,
+                })
+                print(f"Cell Select: R{current_cell[0]} C{current_cell[1]} (Slot {slot_id}) -> MQTT: {config.MQTT_TOPIC_SELECTING} Payload: {payload}")
+                mqtt_handler.publish(config.MQTT_TOPIC_SELECTING, payload)
+
                 self.last_selected_cell = current_cell
                 self.last_cell_select_time = current_time
 
@@ -90,10 +94,12 @@ class HandProcessor:
 
             # Click Publishing
             if is_clicking and (current_time - self.last_click_time) > config.CLICK_COOLDOWN:
-                topic = f"{config.MQTT_TOPIC_PREFIX}/select"
-                payload = str(slot_id)
-                print(f"CLICK at Slot {slot_id} -> MQTT: {topic} Payload: {payload}")
-                mqtt_handler.publish(topic, payload)
+                payload = json.dumps({
+                    "SelectItem": slot_id,
+                    "Goto_Payment": True,
+                })
+                print(f"CLICK at Slot {slot_id} -> MQTT: {config.MQTT_TOPIC_SELECTING} Payload: {payload}")
+                mqtt_handler.publish(config.MQTT_TOPIC_SELECTING, payload)
                 self.last_click_time = current_time
 
             # Populate Result

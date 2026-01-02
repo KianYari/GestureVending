@@ -57,7 +57,7 @@ def calculate_slot_id(row, col):
         slot_id += grid_layout[r]
     # Add current column (1-based index)
     slot_id += (col + 1)
-    return slot_id
+    return slot_id - 1
 
 def draw_grid(frame):
     global grid_layout

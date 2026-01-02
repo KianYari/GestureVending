@@ -46,7 +46,7 @@ def index():
 if __name__ == '__main__':
     print("="*50)
     print("ESP32 UDP + MediaPipe Server Running")
-    print("MQTT Active on: " + config.MQTT_TOPIC_PREFIX)
+    print("MQTT Active on: " + config.MQTT_TOPIC_SELECTING)
     print("="*50)
     
     # Start Background Services
