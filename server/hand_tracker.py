@@ -120,7 +120,6 @@ class HandProcessor:
                     # Click Publishing
                     if is_clicking and (current_time - self.last_click_time) > config.CLICK_COOLDOWN:
                         payload = json.dumps({
-                            "SelectItem": slot_id,
                             "Goto_Payment": True
                         })
                         print(f"CLICK at Slot {slot_id} -> MQTT Payload: {payload}")

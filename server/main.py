@@ -53,5 +53,7 @@ if __name__ == '__main__':
     mqtt_handler.start_mqtt()
     udp_server.start_server()
     
+    time.sleep(1)  # Allow services to initialize
+    
     # Run Flask
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
